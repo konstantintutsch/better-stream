@@ -1,6 +1,8 @@
 use iced::{Element, Fill};
 use iced::widget::{container, row, column, button, text};
 
+use crate::stream::rtsp;
+
 #[derive(Debug, Clone, Copy)]
 pub enum Controls {
     Next,
@@ -9,12 +11,12 @@ pub enum Controls {
 
 #[derive(Default)]
 pub struct Interface {
-    url: String
+    source: rtsp::Source
 }
 
 impl Interface {
     pub fn update(&mut self, message: Controls) {
-        self.url = match message {
+        self.source.url = match message {
             Controls::Next => "👉".to_string(),
             Controls::Previous => "👈".to_string()
         }
@@ -23,7 +25,7 @@ impl Interface {
     pub fn view(&self) -> Element<'_, Controls> {
         container(
             column![
-                text(&self.url),
+                text(&self.source.url),
                 row![
                     button("Previous").on_press(Controls::Previous),
                     button("Next").on_press(Controls::Next)

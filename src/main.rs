@@ -1,3 +1,5 @@
+mod stream;
+
 mod ui;
 use ui::player;
 
