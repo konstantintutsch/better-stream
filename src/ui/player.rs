@@ -11,21 +11,21 @@ pub enum Controls {
 
 #[derive(Default)]
 pub struct Interface {
-    source: rtsp::Source
+    client: rtsp::Client
 }
 
 impl Interface {
     pub fn update(&mut self, message: Controls) {
-        self.source.url = match message {
-            Controls::Next => "👉".to_string(),
-            Controls::Previous => "👈".to_string()
+        match message {
+            Controls::Next => self.client.next(),
+            Controls::Previous => self.client.previous(),
         }
     }
 
     pub fn view(&self) -> Element<'_, Controls> {
         container(
             column![
-                text(&self.source.url),
+                text(&self.client.current().url),
                 row![
                     button("Previous").on_press(Controls::Previous),
                     button("Next").on_press(Controls::Next)
