@@ -14,6 +14,13 @@ pub struct Client {
 }
 
 impl Client {
+    pub fn new(sources: Vec<Source>) -> Self {
+        Client {
+            sources: sources,
+            source: usize::default()
+        }
+    }
+
     pub fn next(&mut self) {
         let last: usize = self.sources.len() - 1;
         let first: usize = 0;

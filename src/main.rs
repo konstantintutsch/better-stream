@@ -1,9 +1,11 @@
-mod stream;
-
 mod ui;
-use ui::player;
+use ui::app;
+
+mod stream;
 
 #[tokio::main]
 async fn main() -> iced::Result {
-    iced::run(player::Interface::update, player::Interface::view)
+    iced::application(app::Player::boot, app::Player::update, app::Player::view)
+        .title("Better Stream")
+        .run()
 }

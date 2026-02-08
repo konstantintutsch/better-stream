@@ -1,4 +1,4 @@
-use iced::{Element, Fill};
+use iced::{Task, Element, Fill};
 use iced::widget::{container, row, column, button, text};
 
 use crate::stream::rtsp;
@@ -10,11 +10,24 @@ pub enum Controls {
 }
 
 #[derive(Default)]
-pub struct Interface {
+pub struct Player {
     client: rtsp::Client
 }
 
-impl Interface {
+impl Player {
+    pub fn new(client: rtsp::Client) -> Self {
+        Self {
+            client: client
+        }
+    }
+
+    pub fn boot() -> (Self, Task<Controls>) {
+        (
+            Player::new(rtsp::Client::new(vec![rtsp::Source{url: "".to_string(), username: None, password: None}])),
+            Task::none()
+        )
+    }
+
     pub fn update(&mut self, message: Controls) {
         match message {
             Controls::Next => self.client.next(),
