@@ -84,11 +84,17 @@ impl Worker {
                 Message::InitializeWorker(client) => {
                     self.client = Some(client);
                     self.send(Message::WorkerInitialized);
+                    continue;
                 }
                 Message::Next => self.client().next(),
                 Message::Previous => self.client().previous(),
-                _ => {}
+                _ => {
+                    self.send(Message::WorkerIgnored);
+                    continue;
+                }
             }
+
+            self.send(Message::WorkerFinished);
         }
     }
 

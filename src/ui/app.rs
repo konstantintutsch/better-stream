@@ -13,6 +13,8 @@ pub enum Message {
     InitializeApp,
     InitializeWorker(Arc<Mutex<rtsp::Client>>),
     WorkerInitialized,
+    WorkerFinished,
+    WorkerIgnored,
     Next,
     Previous,
 }
@@ -73,6 +75,8 @@ impl Player {
                 self.send_worker(Message::InitializeWorker(self.client.clone()))
             }
             Message::WorkerInitialized => { /* Nothing to do */ }
+            Message::WorkerFinished => { /* Nothing to do */ }
+            Message::WorkerIgnored => { /* Nothing to do */ }
             _ => self.send_worker(message), // Relay all other messages to worker
         }
     }
