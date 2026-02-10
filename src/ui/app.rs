@@ -1,37 +1,62 @@
-use iced::{Task, Element, Fill};
-use iced::widget::{container, row, column, button, text};
+use iced::{
+    Element, Fill,
+    Task, Subscription, advanced::subscription,
+    widget::{button, column, container, row, text}
+};
+use std::sync::{Arc, Mutex, mpsc};
 
-use crate::stream::rtsp;
+use crate::{
+    ui::threading,
+    stream::rtsp
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Controls {
+    InitializeWorker,
+    WorkerInitialized,
     Next,
     Previous
 }
 
 #[derive(Default)]
 pub struct Player {
-    client: rtsp::Client
+    client: rtsp::Client,
+    worker_sender: Arc<Mutex<Option<mpsc::Sender<Controls>>>>
 }
 
 impl Player {
-    pub fn new(client: rtsp::Client) -> Self {
+    pub fn new(
+        client: rtsp::Client,
+        worker_sender: Arc<Mutex<Option<mpsc::Sender<Controls>>>>
+    ) -> Self {
         Self {
-            client: client
+            client: client,
+            worker_sender: worker_sender
         }
     }
 
     pub fn boot() -> (Self, Task<Controls>) {
         (
-            Player::new(rtsp::Client::new(vec![rtsp::Source{url: "".to_string(), username: None, password: None}])),
-            Task::none()
+            Player::new(rtsp::Client::new(vec![rtsp::Source{
+                url: "".to_string(),
+                username: None,
+                password: None
+            }]), Arc::new(Mutex::new(None))), // TODO: replace placeholder data with user input
+            Task::done(Controls::InitializeWorker)
         )
     }
 
     pub fn update(&mut self, message: Controls) {
+        log::debug!("{message:?}");
+
         match message {
-            Controls::Next => self.client.next(),
-            Controls::Previous => self.client.previous(),
+            Controls::WorkerInitialized => { /* Nothing to do */ },
+            _ => {
+                // Relay all other messages to worker
+                if let Some(sender) = self.worker_sender.lock().expect("Failed to lock sender").as_ref() {
+                    let _ = sender.send(message);
+                }
+            }
         }
     }
 
@@ -49,5 +74,9 @@ impl Player {
         )
         .center(Fill)
         .into()
+    }
+
+    pub fn subscription(&self) -> Subscription<Controls> {
+        subscription::from_recipe(threading::WorkerSubscription{ sender_holder: self.worker_sender.clone() })
     }
 }

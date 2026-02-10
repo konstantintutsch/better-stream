@@ -11,4 +11,4 @@ test: build
 # Run with debug logging
 [group("dev")]
 run:
-    RUST_LOG=debug cargo run
+    RUST_LOG=better_stream=debug cargo run
