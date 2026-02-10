@@ -38,9 +38,8 @@ impl iced::advanced::subscription::Recipe for WorkerSubscription {
                 *self.sender_holder.lock().expect("Failed to lock sender") = Some(sender);
 
                 thread::spawn(move || {
-                    let worker = rtsp::Worker::new(receiver, output);
-                    
-                    worker.run();
+                    rtsp::Worker::new(receiver, output)
+                        .run();
                 });
 
                 future::pending::<()>().await;
