@@ -42,6 +42,48 @@ pub struct Source {
     pub username: Option<String>,
     pub password: Option<String>,
     pub name: Option<String>,
+    pub zoom: Option<Zoom>,
+}
+
+/// Part of the picture to show, relative to the size of the picture
+///
+/// `x` and `y` are the centre of the visible part in percent, measured from the
+/// top left corner. `factor` is the magnification: 2 shows half the width and
+/// half the height. The visible part never leaves the picture, so a centre close
+/// to an edge is moved inwards.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct Zoom {
+    #[serde(default = "Zoom::centre")]
+    pub x: f32,
+    #[serde(default = "Zoom::centre")]
+    pub y: f32,
+    pub factor: f32,
+}
+
+impl Zoom {
+    fn centre() -> f32 {
+        50.0
+    }
+
+    /// Visible part of a picture of `width` x `height` as `(left, top, width, height)` in pixels
+    pub fn region(&self, width: u32, height: u32) -> (u32, u32, u32, u32) {
+        // Anything below 1 would show more than there is
+        let share = 1.0 / self.factor.max(1.0);
+
+        let (left, visible_width) = Self::axis(self.x, share, width);
+        let (top, visible_height) = Self::axis(self.y, share, height);
+
+        (left, top, visible_width, visible_height)
+    }
+
+    /// Start and length of the visible part along one axis of `size` pixels
+    fn axis(centre: f32, share: f32, size: u32) -> (u32, u32) {
+        let length = ((size as f32 * share).round() as u32).clamp(1, size.max(1));
+        let middle = size as f32 * centre.clamp(0.0, 100.0) / 100.0;
+        let start = (middle - length as f32 / 2.0).round().max(0.0) as u32;
+
+        (start.min(size.saturating_sub(length)), length)
+    }
 }
 
 impl Source {
@@ -195,7 +237,7 @@ pub async fn play(source: Source, frames: mpsc::Sender<Frame>) -> Result<()> {
                 _ => Vec::new(),
             };
 
-            decoder = Some(Decoder::new(codec, &extra_data)?);
+            decoder = Some(Decoder::new(codec, &extra_data, source.zoom)?);
         }
 
         let Some(decoder) = decoder.as_mut() else {
@@ -228,6 +270,52 @@ pub async fn play(source: Source, frames: mpsc::Sender<Frame>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn zoom(x: f32, y: f32, factor: f32) -> Zoom {
+        Zoom { x, y, factor }
+    }
+
+    #[test]
+    fn zoom_centres_the_region() {
+        assert_eq!(zoom(50.0, 50.0, 2.0).region(1000, 600), (250, 150, 500, 300));
+        assert_eq!(zoom(25.0, 50.0, 4.0).region(1000, 600), (125, 225, 250, 150));
+    }
+
+    #[test]
+    fn zoom_stays_inside_the_picture() {
+        assert_eq!(zoom(0.0, 0.0, 2.0).region(1000, 600), (0, 0, 500, 300));
+        assert_eq!(zoom(100.0, 100.0, 2.0).region(1000, 600), (500, 300, 500, 300));
+        assert_eq!(zoom(500.0, -30.0, 2.0).region(1000, 600), (500, 0, 500, 300));
+    }
+
+    #[test]
+    fn zoom_below_one_shows_everything() {
+        assert_eq!(zoom(10.0, 90.0, 1.0).region(1000, 600), (0, 0, 1000, 600));
+        assert_eq!(zoom(10.0, 90.0, 0.5).region(1000, 600), (0, 0, 1000, 600));
+        assert_eq!(zoom(10.0, 90.0, f32::NAN).region(1000, 600), (0, 0, 1000, 600));
+        assert_eq!(zoom(10.0, 90.0, 0.0).region(1000, 600), (0, 0, 1000, 600));
+    }
+
+    #[test]
+    fn zoom_keeps_at_least_one_pixel() {
+        assert_eq!(zoom(50.0, 50.0, f32::INFINITY).region(1000, 600).2, 1);
+        assert_eq!(zoom(50.0, 50.0, 1e9).region(1000, 600).3, 1);
+    }
+
+    #[test]
+    fn zoom_is_read_from_toml() {
+        let source: Source = toml::from_str(
+            "url = \"rtsp://camera\"\nzoom = { x = 80, y = 20.5, factor = 3 }",
+        )
+        .unwrap();
+        let zoom = source.zoom.unwrap();
+        assert_eq!((zoom.x, zoom.y, zoom.factor), (80.0, 20.5, 3.0));
+
+        let source: Source =
+            toml::from_str("url = \"rtsp://camera\"\nzoom = { factor = 2 }").unwrap();
+        let zoom = source.zoom.unwrap();
+        assert_eq!((zoom.x, zoom.y), (50.0, 50.0));
+    }
 
     #[test]
     fn client_wraps_around() {

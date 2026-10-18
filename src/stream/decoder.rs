@@ -8,7 +8,7 @@ use ffmpeg_next::{
     util::format::Pixel,
 };
 
-use super::rtsp::{Frame, Result};
+use super::rtsp::{Frame, Result, Zoom};
 
 static INIT: Once = Once::new();
 
@@ -47,6 +47,7 @@ pub struct Decoder {
     decoded: frame::Video,
     received: frame::Video,
     rgba: frame::Video,
+    zoom: Option<Zoom>,
 }
 
 // SAFETY: the FFmpeg contexts are only ever used through `&mut self`, so they
@@ -61,7 +62,9 @@ impl Decoder {
     /// the AVCDecoderConfigurationRecord of H.264, the HEVCDecoderConfigurationRecord of H.265
     /// and nothing for JPEG. FFmpeg then expects the length prefixed NAL units
     /// retina produces, instead of Annex B.
-    pub fn new(codec: Codec, extra_data: &[u8]) -> Result<Self> {
+    ///
+    /// Pictures are cut down to `zoom` when one is given.
+    pub fn new(codec: Codec, extra_data: &[u8], zoom: Option<Zoom>) -> Result<Self> {
         INIT.call_once(|| {
             if let Err(error) = ffmpeg::init() {
                 log::warn!("Failed to initialize FFmpeg: {error}");
@@ -85,6 +88,7 @@ impl Decoder {
             decoded: frame::Video::empty(),
             received: frame::Video::empty(),
             rgba: frame::Video::empty(),
+            zoom,
         })
     }
 
@@ -143,19 +147,29 @@ impl Decoder {
         let scaler = self.scaler.as_mut().ok_or("Scaler is missing")?;
         scaler.run(&self.decoded, &mut self.rgba)?;
 
+        let (left, top, visible_width, visible_height) = match &self.zoom {
+            Some(zoom) => zoom.region(width, height),
+            None => (0, 0, width, height),
+        };
+
         // Rows are padded to the stride, the frame is tightly packed
-        let row = width as usize * 4;
+        let row = visible_width as usize * 4;
+        let offset = left as usize * 4;
         let stride = self.rgba.stride(0);
         let data = self.rgba.data(0);
 
-        let mut pixels = Vec::with_capacity(row * height as usize);
-        for line in data.chunks(stride).take(height as usize) {
-            pixels.extend_from_slice(&line[..row]);
+        let mut pixels = Vec::with_capacity(row * visible_height as usize);
+        for line in data
+            .chunks(stride)
+            .skip(top as usize)
+            .take(visible_height as usize)
+        {
+            pixels.extend_from_slice(&line[offset..offset + row]);
         }
 
         Ok(Frame {
-            width,
-            height,
+            width: visible_width,
+            height: visible_height,
             pixels,
         })
     }

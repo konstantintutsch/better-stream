@@ -23,6 +23,8 @@ Decoding links the **system FFmpeg** through `ffmpeg-next` (found via `pkg-confi
 - `src/stream/rtsp.rs` — `Source` / `Client` state (URL list with `next`/`previous`/`current`) **and** `play`, the retina + FFmpeg pipeline.
 - `src/stream/decoder.rs` — `Codec` (retina encoding name → FFmpeg codec) and `Decoder`, an FFmpeg decoder plus swscale conversion to RGBA.
 
+Zoom: `Source::zoom` (`rtsp::Zoom`: `x`/`y` centre in percent, `factor` magnification) is applied in `Decoder::convert`, which copies only the visible rows/columns out of the RGBA picture, so `Frame` — and everything downstream, including the GPU upload — is already the cropped size. `Zoom::region` does the math (clamps inside the picture, factor < 1 means no zoom) and is unit tested.
+
 Module files are `ui.rs` / `stream.rs`, not `mod.rs`.
 
 ### Playback pipeline
