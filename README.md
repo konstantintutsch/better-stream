@@ -20,9 +20,11 @@ camera asks for authentication.
 
 ```toml
 [[sources]]
+name = "Front Door"
 url = "rtsp://192.0.2.10:554/stream1"
 
 [[sources]]
+name = "Back Yard"
 url = "rtsp://192.0.2.11:554/stream1"
 username = "admin"
 password = "hunter2"

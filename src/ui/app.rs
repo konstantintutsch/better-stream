@@ -127,7 +127,9 @@ impl Player {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let source = self.client().current().map(|source| source.url.clone());
+        let source = self.client().current().map(|source| {
+    source.name.clone().unwrap_or_else(|| source.url.clone())
+});
 
         let picture: Element<'_, Message> = match &self.frame {
             Some(frame) => image(frame.handle()).width(Fill).height(Fill).into(),
