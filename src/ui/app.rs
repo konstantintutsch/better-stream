@@ -7,9 +7,9 @@ use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 
 use crate::{config::Config, stream::rtsp, ui::threading};
 
-const CONNECTING: &str = "Connecting …";
-const ENDED: &str = "Stream ended";
-const NO_SOURCES: &str = "No sources configured in";
+const CONNECTING: &str = "Verbindung wird aufgebaut...";
+const ENDED: &str = "Stream beendet";
+const NO_SOURCES: &str = "Keine Quellen konfiguriert in";
 
 /// Provides an internal communications framework within the interface and between the interface and its' workers.
 #[derive(Debug, Clone)]
@@ -143,10 +143,10 @@ impl Player {
             column![
                 picture,
                 row![
-                    button("Previous").on_press(Message::Previous),
+                    button("◀").on_press(Message::Previous),
                     text(source.unwrap_or_default()),
-                    button("Reconnect").on_press(Message::Reconnect),
-                    button("Next").on_press(Message::Next)
+                    button("↻").on_press(Message::Reconnect),
+                    button("▶").on_press(Message::Next)
                 ]
                 .align_y(Center)
                 .spacing(10)
