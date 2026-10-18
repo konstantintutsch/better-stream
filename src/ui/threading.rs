@@ -87,8 +87,6 @@ impl Worker {
 
     pub fn run(&mut self) {
         while let Ok(message) = self.receiver.recv() {
-            log::debug!("{message:?}");
-
             match message {
                 Message::InitializeWorker(client) => {
                     self.client = Some(client);
