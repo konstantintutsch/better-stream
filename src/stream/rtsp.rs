@@ -1,14 +1,11 @@
 use iced::futures::StreamExt;
-use openh264::{decoder::Decoder, formats::YUVSource};
 use retina::{client, codec};
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use url::Url;
 
-/// Annex B NAL unit delimiter
-const START_CODE: [u8; 4] = [0, 0, 0, 1];
-/// Size of the length prefix retina puts in front of every NAL unit
-const LENGTH_PREFIX: usize = 4;
+use super::decoder::{Codec, Decoder};
+
 const USER_AGENT: &str = concat!("better-stream/", env!("CARGO_PKG_VERSION"));
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -93,7 +90,7 @@ impl Client {
     }
 }
 
-/// Play a source, decoding H.264 into [`Frame`]s until the stream ends or fails.
+/// Play a source, decoding its video into [`Frame`]s until the stream ends or fails.
 ///
 /// Frames are dropped instead of queued when the receiver cannot keep up, so a
 /// slow consumer never delays the connection.
@@ -105,11 +102,17 @@ pub async fn play(source: Source, frames: mpsc::Sender<Frame>) -> Result<()> {
 
     let mut session = client::Session::describe(Url::parse(&source.url)?, options).await?;
 
-    let video = session
+    let (video, codec) = session
         .streams()
         .iter()
-        .position(|stream| stream.media() == "video" && stream.encoding_name() == "h264")
-        .ok_or("Source has no H.264 video stream")?;
+        .enumerate()
+        .filter(|(_, stream)| stream.media() == "video")
+        .find_map(|(index, stream)| {
+            Codec::from_encoding_name(stream.encoding_name()).map(|codec| (index, codec))
+        })
+        .ok_or("Source has no supported video stream")?;
+
+    log::debug!("Playing {codec:?} stream");
 
     // TCP keeps packets in order and traverses NAT, which matters more than latency here
     let transport = client::Transport::Tcp(client::TcpTransportOptions::default());
@@ -117,41 +120,46 @@ pub async fn play(source: Source, frames: mpsc::Sender<Frame>) -> Result<()> {
         .setup(video, client::SetupOptions::default().transport(transport))
         .await?;
 
-    let mut decoder = Decoder::new()?;
-    let mut buffer: Vec<u8> = Vec::new();
-
-    // Cameras that only advertise their parameter sets in the SDP never repeat
-    // them in band, so prime the decoder before the first picture arrives.
-    if let Some(codec::ParametersRef::Video(parameters)) = session.streams()[video].parameters() {
-        parameter_sets(parameters.extra_data(), &mut buffer);
-        let _ = decoder.decode(&buffer);
-    }
-
     let mut playing = session
         .play(client::PlayOptions::default())
         .await?
         .demuxed()?;
 
-    let mut synchronized = false;
+    // Opened once the stream is at a random access point, because the codec
+    // parameters are only complete after the first frame
+    let mut decoder: Option<Decoder> = None;
 
     while let Some(item) = playing.next().await {
         let codec::CodecItem::VideoFrame(frame) = item? else {
             continue;
         };
 
+        // The parameters changed, so the decoder has to be opened again
+        if frame.has_new_parameters() {
+            decoder = None;
+        }
+
         // A connection usually joins mid group of pictures, where every frame
         // references pictures that were never received
-        if !synchronized {
+        if decoder.is_none() {
             if !frame.is_random_access_point() {
                 continue;
             }
-            synchronized = true;
+
+            let extra_data = match playing.streams()[video].parameters() {
+                Some(codec::ParametersRef::Video(parameters)) => parameters.extra_data().to_vec(),
+                _ => Vec::new(),
+            };
+
+            decoder = Some(Decoder::new(codec, &extra_data)?);
         }
 
-        annex_b(frame.data(), &mut buffer);
+        let Some(decoder) = decoder.as_mut() else {
+            continue;
+        };
 
-        let picture = match decoder.decode(&buffer) {
-            Ok(Some(picture)) => picture,
+        let frame = match decoder.decode(frame.data()) {
+            Ok(Some(frame)) => frame,
             Ok(None) => continue,
             // A corrupted access unit should not end the session; the next
             // random access point recovers the picture.
@@ -159,16 +167,6 @@ pub async fn play(source: Source, frames: mpsc::Sender<Frame>) -> Result<()> {
                 log::warn!("Failed to decode frame: {error}");
                 continue;
             }
-        };
-
-        let (width, height) = picture.dimensions();
-        let mut pixels = vec![0; width * height * 4];
-        picture.write_rgba8(&mut pixels);
-
-        let frame = Frame {
-            width: width as u32,
-            height: height as u32,
-            pixels: pixels,
         };
 
         match frames.try_send(frame) {
@@ -179,63 +177,6 @@ pub async fn play(source: Source, frames: mpsc::Sender<Frame>) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Rewrite length prefixed NAL units into start code delimited ones
-fn annex_b(data: &[u8], output: &mut Vec<u8>) {
-    output.clear();
-
-    let mut offset = 0;
-
-    while let Some(length) = data.get(offset..offset + LENGTH_PREFIX) {
-        let length = u32::from_be_bytes([length[0], length[1], length[2], length[3]]) as usize;
-        offset += LENGTH_PREFIX;
-
-        let Some(unit) = data.get(offset..offset + length) else {
-            break;
-        };
-        offset += length;
-
-        output.extend_from_slice(&START_CODE);
-        output.extend_from_slice(unit);
-    }
-}
-
-/// Extract the parameter sets of an AVCDecoderConfigurationRecord as Annex B.
-///
-/// The record starts with a five byte header, followed by a group of sequence
-/// parameter sets and a group of picture parameter sets. Each group is a count
-/// byte followed by that many two byte lengths with their NAL unit.
-fn parameter_sets(extra_data: &[u8], output: &mut Vec<u8>) {
-    const HEADER: usize = 5;
-    const COUNT: u8 = 0b0001_1111;
-
-    output.clear();
-
-    let mut offset = HEADER;
-
-    for _ in 0..2 {
-        let Some(&count) = extra_data.get(offset) else {
-            return;
-        };
-        offset += 1;
-
-        for _ in 0..(count & COUNT) {
-            let Some(length) = extra_data.get(offset..offset + 2) else {
-                return;
-            };
-            let length = u16::from_be_bytes([length[0], length[1]]) as usize;
-            offset += 2;
-
-            let Some(unit) = extra_data.get(offset..offset + length) else {
-                return;
-            };
-            offset += length;
-
-            output.extend_from_slice(&START_CODE);
-            output.extend_from_slice(unit);
-        }
-    }
 }
 
 #[cfg(test)]
@@ -260,32 +201,5 @@ mod tests {
         client.next();
         client.previous();
         assert!(client.current().is_none());
-    }
-
-    #[test]
-    fn annex_b_replaces_length_prefixes() {
-        let mut output = Vec::new();
-        annex_b(&[0, 0, 0, 2, 0x67, 0xAA, 0, 0, 0, 1, 0x68], &mut output);
-
-        assert_eq!(output, [0, 0, 0, 1, 0x67, 0xAA, 0, 0, 0, 1, 0x68]);
-    }
-
-    #[test]
-    fn annex_b_ignores_truncated_units() {
-        let mut output = Vec::new();
-        annex_b(&[0, 0, 0, 8, 0x67], &mut output);
-
-        assert!(output.is_empty());
-    }
-
-    #[test]
-    fn parameter_sets_reads_both_groups() {
-        let mut output = Vec::new();
-        parameter_sets(
-            &[1, 0x42, 0, 0x1E, 0xFF, 0xE1, 0, 1, 0x67, 1, 0, 1, 0x68],
-            &mut output,
-        );
-
-        assert_eq!(output, [0, 0, 0, 1, 0x67, 0, 0, 0, 1, 0x68]);
     }
 }

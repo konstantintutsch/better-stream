@@ -36,10 +36,14 @@ configured.
 - **Previous** and **Next** switch to another source
 - **Reconnect** retries the current source after a camera went away
 
-Only H.264 video is supported, which is what RTSP cameras overwhelmingly use.
-Streams are transported over TCP.
+H.264, H.265 and Motion JPEG video is supported. Streams are transported over
+TCP.
 
 ## Building
+
+Decoding is done by FFmpeg, so its development libraries (`libavcodec`,
+`libavformat`, `libswscale`, `libavutil`) and `pkg-config` have to be installed,
+for example with `brew install ffmpeg pkg-config`.
 
 ```sh
 just build

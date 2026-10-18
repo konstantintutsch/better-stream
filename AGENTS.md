@@ -12,7 +12,7 @@ Rust GUI app (iced 0.14, tokio) for viewing multiple RTSP streams. Single crate,
 
 For a fast check during iteration use `cargo check` / `cargo test` directly; `just test` is slow for no benefit. The only tests are the pure helpers in `stream::rtsp` — everything else needs a camera.
 
-The first build compiles OpenH264 from source (`openh264/source`) and takes a couple of minutes; later builds reuse it.
+Decoding links the **system FFmpeg** through `ffmpeg-next` (found via `pkg-config`, bindings via bindgen/libclang), so the FFmpeg development libraries must be installed (`brew install ffmpeg pkg-config`). `ffmpeg-next` needs its `format` feature even though only codec and scaling are used; it does not compile without it.
 
 ## Architecture
 
@@ -20,20 +20,22 @@ The first build compiles OpenH264 from source (`openh264/source`) and takes a co
 - `src/config.rs` — `Config::load` reads the `[[sources]]` list from `dirs::config_dir()/better-stream/config.toml`. Missing or broken files degrade to an empty list instead of failing.
 - `src/ui/app.rs` — `Player` (iced state) and the central `Message` enum.
 - `src/ui/threading.rs` — `WorkerSubscription` (a hand-written `iced::advanced::subscription::Recipe`, which is why the `advanced` feature is enabled) plus the `Worker` that runs on a plain `std::thread`.
-- `src/stream/rtsp.rs` — `Source` / `Client` state (URL list with `next`/`previous`/`current`) **and** `play`, the retina + OpenH264 pipeline.
+- `src/stream/rtsp.rs` — `Source` / `Client` state (URL list with `next`/`previous`/`current`) **and** `play`, the retina + FFmpeg pipeline.
+- `src/stream/decoder.rs` — `Codec` (retina encoding name → FFmpeg codec) and `Decoder`, an FFmpeg decoder plus swscale conversion to RGBA.
 
 Module files are `ui.rs` / `stream.rs`, not `mod.rs`.
 
 ### Playback pipeline
 
-`rtsp::play` describes the session, picks the first `video`/`h264` stream, sets it up over TCP and decodes every access unit into an RGBA `rtsp::Frame`.
+`rtsp::play` describes the session, picks the first video stream whose encoding `Codec::from_encoding_name` knows (H.264, H.265, JPEG — exactly what retina can depacketize), sets it up over TCP and decodes every access unit into an RGBA `rtsp::Frame`.
 
-Two conversions are easy to forget:
+Things that are easy to get wrong:
 
-- retina emits NAL units with a 4-byte length prefix, OpenH264 wants Annex B start codes — that is `annex_b`.
-- cameras that only advertise `sprop-parameter-sets` in the SDP never repeat SPS/PPS in band, so the decoder is primed from `VideoParameters::extra_data` via `parameter_sets` (an AVCDecoderConfigurationRecord).
+- retina emits H.264/H.265 access units with 4-byte length prefixes and reports the AVCDecoderConfigurationRecord / HEVCDecoderConfigurationRecord as `VideoParameters::extra_data`. That is exactly the "avcC/hvcC" layout FFmpeg understands, so `Decoder::new` hands it over as `extradata` and packets are passed through unmodified — no Annex B conversion. Empty extra data is correct for JPEG.
+- the decoder is opened lazily at the first random access point, because retina only knows the parameters after the first frame, and reopened when `VideoFrame::has_new_parameters()` is set.
+- `avcodec_receive_frame` clears the target frame even when it returns `EAGAIN`, so `Decoder::decode` receives into a scratch frame and swaps on success.
 
-Decoding starts at the first `is_random_access_point()` frame; without that, joining mid group of pictures produces a burst of OpenH264 errors. Individual decode errors are logged and skipped rather than ending the session.
+Decoding starts at the first `is_random_access_point()` frame; without that, joining mid group of pictures produces a burst of decode errors. Individual decode errors are logged and skipped rather than ending the session.
 
 Frames go through a `tokio::sync::mpsc` channel of size 1 and are sent with `try_send`, so a busy UI drops pictures instead of stalling the connection.
 
@@ -58,7 +60,7 @@ Feature complete for the stated purpose: configured sources are connected, decod
 
 Known limitations, all deliberate:
 
-- H.264 only, TCP only, one source connected at a time — the name says "multi-stream", but the UI steps through sources rather than tiling them.
+- H.264, H.265 and MJPEG only (what retina can depacketize; adding a codec means a new `Codec` variant and a retina depacketizer), TCP only, one source connected at a time — the name says "multi-stream", but the UI steps through sources rather than tiling them.
 - No automatic reconnect; a dead camera needs the **Reconnect** button.
 - Frozen streams are found by eye. There is no staleness timer yet, which would be the natural next feature.
 
