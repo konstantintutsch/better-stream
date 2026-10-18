@@ -1,7 +1,8 @@
 use iced::{
     Center, ContentFit, Element, Fill, Subscription, Task,
     advanced::subscription,
-    widget::{button, column, container, image, row, text},
+    border,
+    widget::{button, container, image, row, stack, text},
 };
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 
@@ -147,20 +148,25 @@ impl Player {
                 .into(),
         };
 
-        column![
+        let controls = container(
+            row![
+                button("◀").on_press(Message::Previous),
+                text(source.unwrap_or_default()),
+                button("↻").on_press(Message::Reconnect),
+                button("▶").on_press(Message::Next)
+            ]
+            .align_y(Center)
+            .spacing(10),
+        )
+        .padding(10)
+        .style(|theme| container::dark(theme).border(border::rounded(8)));
+
+        stack![
             picture,
-            container(
-                row![
-                    button("◀").on_press(Message::Previous),
-                    text(source.unwrap_or_default()),
-                    button("↻").on_press(Message::Reconnect),
-                    button("▶").on_press(Message::Next)
-                ]
-                .align_y(Center)
-                .spacing(10)
-            )
-            .padding(10)
-            .center_x(Fill)
+            container(controls)
+                .padding(10)
+                .align_bottom(Fill)
+                .align_right(Fill)
         ]
         .width(Fill)
         .height(Fill)
