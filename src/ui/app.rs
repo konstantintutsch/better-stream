@@ -3,6 +3,7 @@ use iced::{
     advanced::subscription,
     border,
     widget::{button, container, image, row, stack, text},
+    window,
 };
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 
@@ -76,8 +77,19 @@ impl Player {
                 Arc::new(Mutex::new(rtsp::Client::new(Config::load().sources))),
                 Arc::new(Mutex::new(None)),
             ),
-            Task::done(Message::InitializeApp),
+            Task::batch([Task::done(Message::InitializeApp), Self::fit_window()]),
         )
+    }
+
+    /// Some window managers ignore the maximized hint given at window creation and leave the
+    /// default size, which can be larger than a small display. Shrink to the monitor, then ask
+    /// for maximizing again now that the window exists.
+    fn fit_window() -> Task<Message> {
+        window::oldest().and_then(|id| {
+            window::monitor_size(id)
+                .and_then(move |size| window::resize(id, size))
+                .chain(window::maximize(id, true))
+        })
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
