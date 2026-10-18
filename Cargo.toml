@@ -9,7 +9,12 @@ repository = "https://github.com/konstantintutsch/better-stream"
 
 [dependencies]
 tokio = { version = ">=1.49.0", features = ["full"] }
-iced = { version = ">=0.14.0", features = ["advanced"] }
+iced = { version = ">=0.14.0", features = ["advanced", "image-without-codecs"] }
 retina = ">=0.4.0"
 log = "0.4.29"
 env_logger = "0.11.8"
+openh264 = { version = ">=0.9.9", features = ["source"] }
+serde = { version = ">=1.0.229", features = ["derive"] }
+toml = ">=1.1.8"
+dirs = ">=7.0.0"
+url = ">=2.5.8"
