@@ -61,9 +61,9 @@ configured.
 
 ## Usage
 
-- **Previous** and **Next** switch to another source
-- **Reconnect** retries the current source after a camera went away
-- **Quit** closes the application, only shown when `hide_title_bar` is set
+- **◀** and **▶** switch to another source
+- **↻** retries the current source after a camera went away
+- **✕** closes the application, only shown when `hide_title_bar` is set
 
 H.264, H.265 and Motion JPEG video is supported. Streams are transported over
 TCP.
