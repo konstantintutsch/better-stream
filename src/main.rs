@@ -12,6 +12,7 @@ fn main() -> iced::Result {
         .subscription(app::Player::subscription)
         .window(iced::window::Settings {
             maximized: true,
+            decorations: false,
             ..Default::default()
         })
         .run()
