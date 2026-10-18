@@ -10,5 +10,9 @@ fn main() -> iced::Result {
     iced::application(app::Player::boot, app::Player::update, app::Player::view)
         .title("Better Stream")
         .subscription(app::Player::subscription)
+        .window(iced::window::Settings {
+            maximized: true,
+            ..Default::default()
+        })
         .run()
 }
