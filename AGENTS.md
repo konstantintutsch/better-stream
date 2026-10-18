@@ -52,6 +52,8 @@ State (`rtsp::Client`) is shared as `Arc<Mutex<_>>` and mutated by the worker, s
 
 The `Worker` owns a `tokio::runtime::Runtime` because iced does not provide one. `Worker::play` aborts the previous `JoinHandle` before spawning the next, which is what makes `Next` / `Previous` / `Reconnect` tear down the old session.
 
+Pictures are not drawn straight from the `image::Handle` the worker sends: iced's wgpu renderer uploads images of 2 MiB or more on a worker thread and draws nothing until that is done, so a fresh handle per picture flickers badly (a 2304x1296 camera is 12 MB per picture). `Player` instead turns each `StreamFrame` into an `image::allocate` task, keeps showing the previous `image::Allocation` until `FrameAllocated` arrives, and drops pictures that arrive while an upload is pending. `generation` is bumped by `reset` so a late upload cannot resurrect a picture after the stream failed. `image::allocate` needs iced's full `image` feature, not `image-without-codecs`.
+
 `Message::StreamFrame` is logged at `trace`, not `debug`, so that one line per picture does not bury every other message.
 
 ## Current state

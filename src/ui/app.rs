@@ -23,6 +23,8 @@ pub enum Message {
     Previous,
     Reconnect,
     StreamFrame(image::Handle),
+    /// The renderer finished uploading a picture, tagged with the generation it was requested in
+    FrameAllocated(u64, Result<image::Allocation, image::Error>),
     StreamFailed(String),
     StreamEnded,
 }
@@ -31,8 +33,12 @@ pub enum Message {
 pub struct Player {
     client: Arc<Mutex<rtsp::Client>>,
     worker_sender: Arc<Mutex<Option<mpsc::Sender<Message>>>>,
-    /// Most recently decoded picture, if the stream has delivered one
-    frame: Option<image::Handle>,
+    /// Most recently decoded picture that is ready to be drawn, if the stream has delivered one
+    frame: Option<image::Allocation>,
+    /// A picture is being uploaded, newer ones are dropped until it is done
+    allocating: bool,
+    /// Incremented by every reset, so uploads started before it are discarded
+    generation: u64,
     /// Shown while there is no picture to display
     status: String,
 }
@@ -46,6 +52,8 @@ impl Player {
             client: client,
             worker_sender: worker_sender,
             frame: None,
+            allocating: false,
+            generation: 0,
             status: String::new(),
         };
         player.status = player.waiting();
@@ -68,10 +76,13 @@ impl Player {
         )
     }
 
-    pub fn update(&mut self, message: Message) {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match &message {
             // Logging every picture would bury every other message
             Message::StreamFrame(_) => log::trace!("StreamFrame"),
+            Message::FrameAllocated(generation, result) => {
+                log::trace!("FrameAllocated({generation}, ok: {})", result.is_ok())
+            }
             _ => log::debug!("{message:?}"),
         }
 
@@ -83,18 +94,43 @@ impl Player {
             // The worker reconnects whenever it finishes, so wait for a new picture
             Message::WorkerFinished => self.reset(self.waiting()),
             Message::WorkerIgnored => { /* Nothing to do */ }
-            Message::StreamFrame(frame) => self.frame = Some(frame),
+            // Large pictures are uploaded in the background and not drawn until
+            // that is done, so a new handle per picture would flicker. Keep the
+            // current picture on screen until its successor is ready.
+            Message::StreamFrame(frame) => {
+                if self.allocating {
+                    log::trace!("Dropped picture, previous one still uploading");
+                } else {
+                    self.allocating = true;
+                    let generation = self.generation;
+
+                    return image::allocate(frame)
+                        .map(move |result| Message::FrameAllocated(generation, result));
+                }
+            }
+            Message::FrameAllocated(generation, result) => {
+                if generation == self.generation {
+                    self.allocating = false;
+
+                    match result {
+                        Ok(frame) => self.frame = Some(frame),
+                        Err(error) => log::warn!("Failed to upload picture: {error:?}"),
+                    }
+                }
+            }
             Message::StreamFailed(error) => self.reset(error),
             Message::StreamEnded => self.reset(ENDED.to_string()),
             _ => self.send_worker(message), // Relay all other messages to worker
         }
+
+        Task::none()
     }
 
     pub fn view(&self) -> Element<'_, Message> {
         let source = self.client().current().map(|source| source.url.clone());
 
         let picture: Element<'_, Message> = match &self.frame {
-            Some(frame) => image(frame).width(Fill).height(Fill).into(),
+            Some(frame) => image(frame.handle()).width(Fill).height(Fill).into(),
             None => container(text(self.status.as_str()))
                 .center(Fill)
                 .padding(10)
@@ -137,6 +173,8 @@ impl Player {
     /// Drop the displayed picture in favour of a status message
     fn reset(&mut self, status: String) {
         self.frame = None;
+        self.allocating = false;
+        self.generation += 1;
         self.status = status;
     }
 
