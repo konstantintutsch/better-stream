@@ -25,6 +25,8 @@ pub enum Message {
     Next,
     Previous,
     Reconnect,
+    /// UI-only: close the application
+    Quit,
     StreamFrame(image::Handle),
     /// The renderer finished uploading a picture, tagged with the generation it was requested in
     FrameAllocated(u64, Result<image::Allocation, image::Error>),
@@ -137,6 +139,7 @@ impl Player {
             Message::StreamFailed(error) => self.reset(error),
             Message::StreamEnded => self.reset(ENDED.to_string()),
             Message::StreamStalled => self.reset(RECONNECTING.to_string()),
+            Message::Quit => return iced::exit(),
             _ => self.send_worker(message), // Relay all other messages to worker
         }
 
@@ -165,6 +168,7 @@ impl Player {
                 button("◀").on_press(Message::Previous),
                 text(source.unwrap_or_default()),
                 button("↻").on_press(Message::Reconnect),
+                button("✕").on_press(Message::Quit),
                 button("▶").on_press(Message::Next)
             ]
             .align_y(Center)
