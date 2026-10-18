@@ -142,12 +142,13 @@ impl Player {
         container(
             column![
                 picture,
-                text(source.unwrap_or_default()),
                 row![
                     button("Previous").on_press(Message::Previous),
+                    text(source.unwrap_or_default()),
                     button("Reconnect").on_press(Message::Reconnect),
                     button("Next").on_press(Message::Next)
                 ]
+                .align_y(Center)
                 .spacing(10)
             ]
             .align_x(Center)
