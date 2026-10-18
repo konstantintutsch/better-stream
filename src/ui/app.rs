@@ -1,5 +1,5 @@
 use iced::{
-    Center, Element, Fill, Subscription, Task,
+    Center, ContentFit, Element, Fill, Subscription, Task,
     advanced::subscription,
     widget::{button, column, container, image, row, text},
 };
@@ -136,16 +136,20 @@ impl Player {
 });
 
         let picture: Element<'_, Message> = match &self.frame {
-            Some(frame) => image(frame.handle()).width(Fill).height(Fill).into(),
+            Some(frame) => image(frame.handle())
+                .width(Fill)
+                .height(Fill)
+                .content_fit(ContentFit::Cover)
+                .into(),
             None => container(text(self.status.as_str()))
                 .center(Fill)
                 .padding(10)
                 .into(),
         };
 
-        container(
-            column![
-                picture,
+        column![
+            picture,
+            container(
                 row![
                     button("◀").on_press(Message::Previous),
                     text(source.unwrap_or_default()),
@@ -154,12 +158,12 @@ impl Player {
                 ]
                 .align_y(Center)
                 .spacing(10)
-            ]
-            .align_x(Center)
-            .spacing(10),
-        )
-        .padding(10)
-        .center(Fill)
+            )
+            .padding(10)
+            .center_x(Fill)
+        ]
+        .width(Fill)
+        .height(Fill)
         .into()
     }
 
