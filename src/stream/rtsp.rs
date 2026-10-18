@@ -1,7 +1,11 @@
 use iced::futures::StreamExt;
 use retina::{client, codec};
 use serde::Deserialize;
-use tokio::sync::mpsc;
+use std::{fmt, time::Duration};
+use tokio::{
+    sync::mpsc,
+    time::{Instant, timeout, timeout_at},
+};
 use url::Url;
 
 use super::decoder::{Codec, Decoder};
@@ -10,6 +14,26 @@ const USER_AGENT: &str = concat!("better-stream/", env!("CARGO_PKG_VERSION"));
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// How long a connection may take to start playing before it is given up on
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long a session may go without a new picture before it counts as frozen
+const STALL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The connection is alive, but no new picture arrived in time.
+///
+/// Returned by [`play`] so that callers can tell a frozen stream, which is
+/// worth reconnecting, from one that failed.
+#[derive(Debug)]
+pub struct Stalled;
+
+impl fmt::Display for Stalled {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "No picture for {} seconds", STALL_TIMEOUT.as_secs())
+    }
+}
+
+impl std::error::Error for Stalled {}
 
 /// Provides a source to access a RTSP stream
 #[derive(Default, Debug, Clone, Deserialize)]
@@ -95,43 +119,62 @@ impl Client {
 ///
 /// Frames are dropped instead of queued when the receiver cannot keep up, so a
 /// slow consumer never delays the connection.
+///
+/// Fails with [`Stalled`] when the session stops producing pictures.
 pub async fn play(source: Source, frames: mpsc::Sender<Frame>) -> Result<()> {
     let options = client::SessionOptions::default()
         .creds(source.credentials())
         .user_agent(USER_AGENT.to_string())
         .teardown(client::TeardownPolicy::Auto);
 
-    let mut session = client::Session::describe(Url::parse(&source.url)?, options).await?;
+    // A camera that froze may accept the connection and never answer
+    let (mut playing, video, codec) = timeout(CONNECT_TIMEOUT, async {
+        let mut session = client::Session::describe(Url::parse(&source.url)?, options).await?;
 
-    let (video, codec) = session
-        .streams()
-        .iter()
-        .enumerate()
-        .filter(|(_, stream)| stream.media() == "video")
-        .find_map(|(index, stream)| {
-            Codec::from_encoding_name(stream.encoding_name()).map(|codec| (index, codec))
-        })
-        .ok_or("Source has no supported video stream")?;
+        let (video, codec) = session
+            .streams()
+            .iter()
+            .enumerate()
+            .filter(|(_, stream)| stream.media() == "video")
+            .find_map(|(index, stream)| {
+                Codec::from_encoding_name(stream.encoding_name()).map(|codec| (index, codec))
+            })
+            .ok_or("Source has no supported video stream")?;
 
-    log::debug!("Playing {codec:?} stream");
+        log::debug!("Playing {codec:?} stream");
 
-    // TCP keeps packets in order and traverses NAT, which matters more than latency here
-    let transport = client::Transport::Tcp(client::TcpTransportOptions::default());
-    session
-        .setup(video, client::SetupOptions::default().transport(transport))
-        .await?;
+        // TCP keeps packets in order and traverses NAT, which matters more than latency here
+        let transport = client::Transport::Tcp(client::TcpTransportOptions::default());
+        session
+            .setup(video, client::SetupOptions::default().transport(transport))
+            .await?;
 
-    let mut playing = session
-        .play(client::PlayOptions::default())
-        .await?
-        .demuxed()?;
+        let playing = session
+            .play(client::PlayOptions::default())
+            .await?
+            .demuxed()?;
+
+        Ok::<_, Error>((playing, video, codec))
+    })
+    .await
+    .map_err(|_| "Connection timed out")??;
 
     // Opened once the stream is at a random access point, because the codec
     // parameters are only complete after the first frame
     let mut decoder: Option<Decoder> = None;
 
-    while let Some(item) = playing.next().await {
-        let codec::CodecItem::VideoFrame(frame) = item? else {
+    // Packets can keep arriving while no picture comes out of them, so only
+    // decoded pictures count as a sign of life
+    let mut last_picture = Instant::now();
+
+    loop {
+        let item = match timeout_at(last_picture + STALL_TIMEOUT, playing.next()).await {
+            Ok(Some(item)) => item?,
+            Ok(None) => break,
+            Err(_) => return Err(Stalled.into()),
+        };
+
+        let codec::CodecItem::VideoFrame(frame) = item else {
             continue;
         };
 
@@ -169,6 +212,8 @@ pub async fn play(source: Source, frames: mpsc::Sender<Frame>) -> Result<()> {
                 continue;
             }
         };
+
+        last_picture = Instant::now();
 
         match frames.try_send(frame) {
             Ok(()) => {}

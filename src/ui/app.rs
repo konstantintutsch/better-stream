@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use crate::{config::Config, stream::rtsp, ui::threading};
 
 const CONNECTING: &str = "Verbindung wird aufgebaut...";
+const RECONNECTING: &str = "Stream eingefroren, Verbindung wird neu aufgebaut...";
 const ENDED: &str = "Stream beendet";
 const NO_SOURCES: &str = "Keine Quellen konfiguriert in";
 
@@ -27,6 +28,8 @@ pub enum Message {
     FrameAllocated(u64, Result<image::Allocation, image::Error>),
     StreamFailed(String),
     StreamEnded,
+    /// The stream froze and the worker is already reconnecting it
+    StreamStalled,
 }
 
 #[derive(Default)]
@@ -120,6 +123,7 @@ impl Player {
             }
             Message::StreamFailed(error) => self.reset(error),
             Message::StreamEnded => self.reset(ENDED.to_string()),
+            Message::StreamStalled => self.reset(RECONNECTING.to_string()),
             _ => self.send_worker(message), // Relay all other messages to worker
         }
 

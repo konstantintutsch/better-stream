@@ -37,6 +37,8 @@ Things that are easy to get wrong:
 
 Decoding starts at the first `is_random_access_point()` frame; without that, joining mid group of pictures produces a burst of decode errors. Individual decode errors are logged and skipped rather than ending the session.
 
+Frozen streams: `play` fails with the `rtsp::Stalled` error when no *decoded* picture arrived for `STALL_TIMEOUT` (10 s; packets alone, e.g. RTCP or undecodable data, do not count). The connect phase (describe/setup/play) has its own `CONNECT_TIMEOUT` and fails as an ordinary error. `Worker::play` runs `rtsp::play` in a loop: on `Stalled` it sends `Message::StreamStalled` (UI-only, resets the picture to a status text), waits `RECONNECT_DELAY` and reconnects; any other outcome sends `StreamEnded` / `StreamFailed` and stops. Each attempt is joined with its frame forwarder before the message is sent, so no stale picture can arrive after `StreamStalled`.
+
 Frames go through a `tokio::sync::mpsc` channel of size 1 and are sent with `try_send`, so a busy UI drops pictures instead of stalling the connection.
 
 ### Threading model (easy to get wrong)
@@ -63,8 +65,7 @@ Feature complete for the stated purpose: configured sources are connected, decod
 Known limitations, all deliberate:
 
 - H.264, H.265 and MJPEG only (what retina can depacketize; adding a codec means a new `Codec` variant and a retina depacketizer), TCP only, one source connected at a time — the name says "multi-stream", but the UI steps through sources rather than tiling them.
-- No automatic reconnect; a dead camera needs the **Reconnect** button.
-- Frozen streams are found by eye. There is no staleness timer yet, which would be the natural next feature.
+- Only frozen streams reconnect automatically. A source that fails (unreachable, auth, no supported video, connect timeout) or ends needs the **Reconnect** button.
 
 Gotcha: `crate::stream` (our module) collides by name with `iced::stream`; `threading.rs` imports both, so keep the paths qualified.
 

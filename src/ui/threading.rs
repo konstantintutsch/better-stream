@@ -9,6 +9,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex, MutexGuard, mpsc},
     thread,
+    time::Duration,
 };
 use tokio::{runtime::Runtime, task::JoinHandle};
 
@@ -17,6 +18,8 @@ use crate::{stream::rtsp, ui::app::Message};
 const CHANNEL_SIZE: usize = 5;
 /// Only the newest picture is worth showing, so barely buffer any
 const FRAME_SIZE: usize = 1;
+/// Pause before reconnecting a frozen stream, so a camera that keeps freezing is not hammered
+const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 pub struct WorkerSubscription {
@@ -124,30 +127,46 @@ impl Worker {
         };
 
         let mut output = self.output.clone();
-        let mut frames = self.output.clone();
+        let frames = self.output.clone();
 
         self.stream = Some(self.runtime.spawn(async move {
-            let (sender, mut receiver) = tokio::sync::mpsc::channel::<rtsp::Frame>(FRAME_SIZE);
+            loop {
+                let (sender, mut receiver) = tokio::sync::mpsc::channel::<rtsp::Frame>(FRAME_SIZE);
+                let mut pictures = frames.clone();
 
-            // Runs alongside the connection and ends once it drops the sender
-            let forward = async move {
-                while let Some(frame) = receiver.recv().await {
-                    let handle = image::Handle::from_rgba(frame.width, frame.height, frame.pixels);
+                // Runs alongside the connection and ends once it drops the sender
+                let forward = async move {
+                    while let Some(frame) = receiver.recv().await {
+                        let handle =
+                            image::Handle::from_rgba(frame.width, frame.height, frame.pixels);
 
-                    if frames.send(Message::StreamFrame(handle)).await.is_err() {
-                        break;
+                        if pictures.send(Message::StreamFrame(handle)).await.is_err() {
+                            break;
+                        }
                     }
-                }
-            };
+                };
 
-            let (result, ()) = iced::futures::join!(rtsp::play(source, sender), forward);
+                let (result, ()) =
+                    iced::futures::join!(rtsp::play(source.clone(), sender), forward);
 
-            let message = match result {
-                Ok(()) => Message::StreamEnded,
-                Err(error) => Message::StreamFailed(error.to_string()),
-            };
+                let message = match result {
+                    Ok(()) => Message::StreamEnded,
+                    Err(error) if error.is::<rtsp::Stalled>() => {
+                        log::warn!("{error}, reconnecting");
 
-            let _ = output.send(message).await;
+                        if output.send(Message::StreamStalled).await.is_err() {
+                            break;
+                        }
+
+                        tokio::time::sleep(RECONNECT_DELAY).await;
+                        continue;
+                    }
+                    Err(error) => Message::StreamFailed(error.to_string()),
+                };
+
+                let _ = output.send(message).await;
+                break;
+            }
         }));
     }
 
