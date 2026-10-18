@@ -1,10 +1,10 @@
 mod ui;
 use ui::app;
 
+mod config;
 mod stream;
 
-#[tokio::main]
-async fn main() -> iced::Result {
+fn main() -> iced::Result {
     env_logger::init();
 
     iced::application(app::Player::boot, app::Player::update, app::Player::view)

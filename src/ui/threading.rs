@@ -2,6 +2,7 @@ use iced::{
     advanced::subscription,
     futures::{SinkExt, Stream},
     stream,
+    widget::image,
 };
 use std::{
     future, hash,
@@ -9,10 +10,13 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, mpsc},
     thread,
 };
+use tokio::{runtime::Runtime, task::JoinHandle};
 
 use crate::{stream::rtsp, ui::app::Message};
 
 const CHANNEL_SIZE: usize = 5;
+/// Only the newest picture is worth showing, so barely buffer any
+const FRAME_SIZE: usize = 1;
 
 #[derive(Clone)]
 pub struct WorkerSubscription {
@@ -53,6 +57,9 @@ pub struct Worker {
     receiver: mpsc::Receiver<Message>,
     output: iced::futures::channel::mpsc::Sender<Message>,
     client: Option<Arc<Mutex<rtsp::Client>>>,
+    /// Owned by the worker, because iced does not run on a tokio runtime
+    runtime: Runtime,
+    stream: Option<JoinHandle<()>>,
 }
 
 impl Worker {
@@ -64,6 +71,8 @@ impl Worker {
             receiver: receiver,
             output: output,
             client: None,
+            runtime: Runtime::new().expect("Failed to create runtime"),
+            stream: None,
         }
     }
 
@@ -83,11 +92,19 @@ impl Worker {
             match message {
                 Message::InitializeWorker(client) => {
                     self.client = Some(client);
+                    self.play();
                     self.send(Message::WorkerInitialized);
                     continue;
                 }
-                Message::Next => self.client().next(),
-                Message::Previous => self.client().previous(),
+                Message::Next => {
+                    self.client().next();
+                    self.play();
+                }
+                Message::Previous => {
+                    self.client().previous();
+                    self.play();
+                }
+                Message::Reconnect => self.play(),
                 _ => {
                     self.send(Message::WorkerIgnored);
                     continue;
@@ -96,6 +113,44 @@ impl Worker {
 
             self.send(Message::WorkerFinished);
         }
+    }
+
+    /// Drop the running stream and connect to the currently selected source
+    fn play(&mut self) {
+        if let Some(stream) = self.stream.take() {
+            stream.abort();
+        }
+
+        let Some(source) = self.client().current().cloned() else {
+            return;
+        };
+
+        let mut output = self.output.clone();
+        let mut frames = self.output.clone();
+
+        self.stream = Some(self.runtime.spawn(async move {
+            let (sender, mut receiver) = tokio::sync::mpsc::channel::<rtsp::Frame>(FRAME_SIZE);
+
+            // Runs alongside the connection and ends once it drops the sender
+            let forward = async move {
+                while let Some(frame) = receiver.recv().await {
+                    let handle = image::Handle::from_rgba(frame.width, frame.height, frame.pixels);
+
+                    if frames.send(Message::StreamFrame(handle)).await.is_err() {
+                        break;
+                    }
+                }
+            };
+
+            let (result, ()) = iced::futures::join!(rtsp::play(source, sender), forward);
+
+            let message = match result {
+                Ok(()) => Message::StreamEnded,
+                Err(error) => Message::StreamFailed(error.to_string()),
+            };
+
+            let _ = output.send(message).await;
+        }));
     }
 
     /// Send message to output
