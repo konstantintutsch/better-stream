@@ -48,12 +48,15 @@ pub struct Player {
     generation: u64,
     /// Shown while there is no picture to display
     status: String,
+    /// Without a title bar there is no window close button, so show a quit button
+    hide_title_bar: bool,
 }
 
 impl Player {
     pub fn new(
         client: Arc<Mutex<rtsp::Client>>,
         worker_sender: Arc<Mutex<Option<mpsc::Sender<Message>>>>,
+        hide_title_bar: bool,
     ) -> Self {
         let mut player = Self {
             client: client,
@@ -62,6 +65,7 @@ impl Player {
             allocating: false,
             generation: 0,
             status: String::new(),
+            hide_title_bar,
         };
         player.status = player.waiting();
 
@@ -74,10 +78,13 @@ impl Player {
     }
 
     pub fn boot() -> (Self, Task<Message>) {
+        let config = Config::load();
+
         (
             Player::new(
-                Arc::new(Mutex::new(rtsp::Client::new(Config::load().sources))),
+                Arc::new(Mutex::new(rtsp::Client::new(config.sources))),
                 Arc::new(Mutex::new(None)),
+                config.hide_title_bar,
             ),
             Task::batch([Task::done(Message::InitializeApp), Self::fit_window()]),
         )
@@ -163,17 +170,19 @@ impl Player {
                 .into(),
         };
 
-        let controls = container(
-            row![
-                button("◀").on_press(Message::Previous),
-                text(source.unwrap_or_default()),
-                button("↻").on_press(Message::Reconnect),
-                button("✕").on_press(Message::Quit),
-                button("▶").on_press(Message::Next)
-            ]
-            .align_y(Center)
-            .spacing(10),
-        )
+        let mut buttons = row![
+            button("◀").on_press(Message::Previous),
+            text(source.unwrap_or_default()),
+            button("↻").on_press(Message::Reconnect),
+        ]
+        .align_y(Center)
+        .spacing(10);
+
+        if self.hide_title_bar {
+            buttons = buttons.push(button("✕").on_press(Message::Quit));
+        }
+
+        let controls = container(buttons.push(button("▶").on_press(Message::Next)))
         .padding(10)
         .style(|theme| container::dark(theme).border(border::rounded(8)));
 

@@ -44,6 +44,18 @@ url = "rtsp://192.0.2.12:554/stream1"
 zoom = { x = 80, y = 30, factor = 3 }
 ```
 
+By default the window has a title bar. Set `hide_title_bar` to remove it; the
+window then shows a quit button instead. The option has to be placed above the
+first `[[sources]]` table and is read at startup.
+
+```toml
+hide_title_bar = true
+
+[[sources]]
+name = "Front Door"
+url = "rtsp://192.0.2.10:554/stream1"
+```
+
 The path to the configuration file is shown in the window while no sources are
 configured.
 
@@ -51,6 +63,7 @@ configured.
 
 - **Previous** and **Next** switch to another source
 - **Reconnect** retries the current source after a camera went away
+- **Quit** closes the application, only shown when `hide_title_bar` is set
 
 H.264, H.265 and Motion JPEG video is supported. Streams are transported over
 TCP.

@@ -17,7 +17,7 @@ Decoding links the **system FFmpeg** through `ffmpeg-next` (found via `pkg-confi
 ## Architecture
 
 - `src/main.rs` — boots `iced::application(Player::boot, Player::update, Player::view)`. Deliberately *not* `#[tokio::main]`: iced runs its own executor, and the one tokio runtime lives inside the worker.
-- `src/config.rs` — `Config::load` reads the `[[sources]]` list from `dirs::config_dir()/better-stream/config.toml`. Missing or broken files degrade to an empty list instead of failing.
+- `src/config.rs` — `Config::load` reads the top-level `hide_title_bar` option (bool, default `false`; hides the window title bar via `decorations` in `main.rs`, and `Player::view` shows the quit button only while it is set, since otherwise the title bar closes the window; must come before the first `[[sources]]` table in the TOML) and the `[[sources]]` list from `dirs::config_dir()/better-stream/config.toml`. Missing or broken files degrade to an empty list instead of failing.
 - `src/ui/app.rs` — `Player` (iced state) and the central `Message` enum.
 - `src/ui/threading.rs` — `WorkerSubscription` (a hand-written `iced::advanced::subscription::Recipe`, which is why the `advanced` feature is enabled) plus the `Worker` that runs on a plain `std::thread`.
 - `src/stream/rtsp.rs` — `Source` / `Client` state (URL list with `next`/`previous`/`current`) **and** `play`, the retina + FFmpeg pipeline.
@@ -74,4 +74,5 @@ Gotcha: `crate::stream` (our module) collides by name with `iced::stream`; `thre
 ## Conventions
 
 - Commits follow Conventional Commits (`feat:`, `fix:`, `refactor:`, `style:`, `build:`) and are signed off — use `git commit -s`.
+- Commit every change as soon as it is done, without waiting to be asked, and document user-visible changes (configuration options, controls) in `README.md` in the same commit.
 - Edition 2024; dependencies are pinned with `>=` ranges in `Cargo.toml`.

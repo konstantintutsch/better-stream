@@ -5,9 +5,12 @@ use crate::stream::rtsp;
 
 const FILE: &str = "better-stream/config.toml";
 
-/// User supplied list of RTSP sources, read from a TOML file
+/// User supplied settings and list of RTSP sources, read from a TOML file
 #[derive(Default, Debug, Clone, Deserialize)]
 pub struct Config {
+    /// Hide the window title bar, which also shows the quit button (default: false)
+    #[serde(default)]
+    pub hide_title_bar: bool,
     #[serde(default)]
     pub sources: Vec<rtsp::Source>,
 }
